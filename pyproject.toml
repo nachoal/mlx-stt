@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stt"
+version = "0.1.0"
+description = "Local STT CLI with backend recommendation, transcription, and benchmarking"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Ignacio Alonso" },
+]
+license = { text = "MIT" }
+keywords = ["stt", "asr", "transcription", "mlx", "parakeet", "qwen", "agents", "macos"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+stt = "stt.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/nachoal/agent-stt"
+Repository = "https://github.com/nachoal/agent-stt"
+Issues = "https://github.com/nachoal/agent-stt/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["stt"]

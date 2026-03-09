@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+dist/
+build/
+*.egg-info/
+.DS_Store
+*.wav
+*.mp3
+*.m4a
+*.srt
+*.vtt
+benchmark_results_*.json
