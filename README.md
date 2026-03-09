@@ -52,7 +52,31 @@ These defaults are based on local benchmarking logic built into the tool.
 
 ## Installation
 
-### 1. Install the CLI
+### Fastest install
+
+This gives you:
+
+- the `stt` CLI
+- an isolated runtime under `~/Library/Application Support/mlx-stt`
+- `mlx-audio`
+- `parakeet-mlx`
+- pre-downloaded core models
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nachoal/mlx-stt/main/install.sh | bash
+```
+
+### Homebrew-oriented install
+
+If you prefer to start from Homebrew-managed tools:
+
+```bash
+brew install uv ffmpeg
+uv tool install git+https://github.com/nachoal/mlx-stt
+stt setup --download-models core
+```
+
+### Manual install
 
 ```bash
 uv tool install git+https://github.com/nachoal/mlx-stt
@@ -64,30 +88,21 @@ For local development:
 uv tool install --force -e .
 ```
 
-### 2. Install runtime dependencies
-
-You need:
-
-- `ffmpeg`
-- `parakeet-mlx`
-- a Python environment with `mlx-audio`
-
-Example:
+Then create the isolated runtime:
 
 ```bash
-brew install ffmpeg
-uv tool install parakeet-mlx
-uv venv ~/.venvs/mlx-audio
-~/.venvs/mlx-audio/bin/python -m pip install mlx-audio transformers
+stt setup --download-models core
 ```
 
-Then point `stt` at that Python:
+This creates a dedicated runtime and stores its paths in `~/Library/Application Support/mlx-stt/config.json`.
+
+If you already have your own MLX Python environment and want to use that instead:
 
 ```bash
-export STT_SHARED_PYTHON=~/.venvs/mlx-audio/bin/python
+export STT_SHARED_PYTHON=/path/to/python-with-mlx-audio
 ```
 
-`stt doctor --json` will confirm the runtime.
+`stt doctor --json` will show exactly which runtime is active.
 
 ## Commands
 
@@ -156,6 +171,18 @@ This reports:
 - whether `parakeet-mlx` is in `PATH`
 - which Python runtime will be used for `mlx-audio`
 - detected versions for `parakeet-mlx`, `mlx-audio`, and `transformers`
+
+### Setup
+
+```bash
+stt setup --download-models core
+```
+
+Options:
+
+- `--download-models none|core|all`
+- `--install-ffmpeg`
+- `--runtime-dir /custom/path`
 
 ## Environment
 

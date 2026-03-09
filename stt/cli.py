@@ -7,9 +7,9 @@ from pathlib import Path
 import sys
 
 from .benchmark import benchmark_file, benchmark_repo_samples
-from .config import resolve_shared_python
-from .constants import PARAKEET_BINARY
+from .config import config_path, default_runtime_dir, load_config, resolve_parakeet_binary, resolve_shared_python, stt_home
 from .recommend import recommend_backend
+from .runtime import bootstrap_runtime
 from .transcribe import transcribe_mlx_parakeet, transcribe_parakeet_cli, transcribe_qwen
 from .utils import json_print, run_command, which
 
@@ -51,6 +51,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     doctor_parser = subparsers.add_parser("doctor", help="Inspect local runtime state")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON output")
+
+    setup_parser = subparsers.add_parser("setup", help="Create an isolated runtime and pre-download models")
+    setup_parser.add_argument("--runtime-dir", help="Override the runtime directory")
+    setup_parser.add_argument(
+        "--download-models",
+        default="core",
+        choices=["none", "core", "all"],
+        help="Which models to warm into the local cache",
+    )
+    setup_parser.add_argument("--install-ffmpeg", action="store_true", help="Install ffmpeg with Homebrew if missing")
+    setup_parser.add_argument("--json", action="store_true", help="Print JSON output")
 
     return parser.parse_args(argv)
 
@@ -185,16 +196,20 @@ def command_benchmark(args: argparse.Namespace) -> int:
 
 def command_doctor(args: argparse.Namespace) -> int:
     shared_python = resolve_shared_python()
+    configured = load_config()
     payload = {
         "python": sys.executable,
+        "stt_home": str(stt_home()),
+        "config_path": str(config_path()),
+        "config": configured,
         "shared_python": shared_python,
         "shared_python_exists": bool(shared_python),
         "ffmpeg": which("ffmpeg"),
         "ffprobe": which("ffprobe"),
-        "parakeet_mlx_binary": which(PARAKEET_BINARY),
+        "parakeet_mlx_binary": resolve_parakeet_binary(),
         "versions": {
             "stt": _package_version("stt"),
-            "parakeet-mlx": _external_package_version("python3", "parakeet-mlx"),
+            "parakeet-mlx": _external_package_version(shared_python or "python3", "parakeet-mlx") if (shared_python or which("python3")) else None,
             "mlx-audio": _external_package_version(shared_python, "mlx-audio") if shared_python else None,
             "transformers": _external_package_version(shared_python, "transformers") if shared_python else None,
         },
@@ -212,6 +227,22 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_setup(args: argparse.Namespace) -> int:
+    runtime_dir = Path(args.runtime_dir).expanduser().resolve() if args.runtime_dir else default_runtime_dir()
+    result = bootstrap_runtime(
+        runtime_dir=runtime_dir,
+        download_models=args.download_models,
+        install_ffmpeg=args.install_ffmpeg,
+        live=not args.json,
+    )
+    payload = result.to_dict()
+    if args.json:
+        json_print(payload)
+    else:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if args.command == "recommend":
@@ -222,4 +253,6 @@ def main(argv: list[str] | None = None) -> int:
         return command_benchmark(args)
     if args.command == "doctor":
         return command_doctor(args)
+    if args.command == "setup":
+        return command_setup(args)
     raise SystemExit(f"Unknown command: {args.command}")

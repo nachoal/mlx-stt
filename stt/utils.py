@@ -7,10 +7,18 @@ import subprocess
 from typing import Any
 
 
-def run_command(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+def run_command(
+    cmd: list[str],
+    *,
+    check: bool = True,
+    live: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    if live:
+        proc = subprocess.run(cmd, text=True)
+    else:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
     if check and proc.returncode != 0:
-        stderr = proc.stderr.strip() or proc.stdout.strip()
+        stderr = (proc.stderr or "").strip() or (proc.stdout or "").strip()
         raise RuntimeError(f"Command failed ({proc.returncode}): {' '.join(cmd)}\n{stderr}")
     return proc
 

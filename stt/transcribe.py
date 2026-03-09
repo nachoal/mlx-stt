@@ -7,9 +7,9 @@ import tempfile
 import time
 from typing import Any
 
-from .config import resolve_shared_python
+from .config import resolve_parakeet_binary, resolve_shared_python
 from .constants import PARAKEET_BINARY, PARAKEET_MODEL, QWEN_MODELS
-from .utils import audio_duration, convert_video_to_wav, file_kind, run_command, which
+from .utils import audio_duration, convert_video_to_wav, file_kind, run_command
 
 
 @dataclass
@@ -169,7 +169,8 @@ def transcribe_parakeet_cli(
     target_dir = output_dir or Path(tmp_output.name)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    if which(PARAKEET_BINARY) is None:
+    parakeet_binary = resolve_parakeet_binary()
+    if parakeet_binary is None:
         return TranscriptionResult(
             backend="parakeet-mlx",
             model=PARAKEET_MODEL,
@@ -178,11 +179,11 @@ def transcribe_parakeet_cli(
             total_time=None,
             audio_duration=audio_duration(prepared_path),
             rtf=None,
-            stderr="parakeet-mlx not found in PATH",
+            stderr="parakeet-mlx not found. Run `stt setup` or set STT_PARAKEET_BINARY.",
         )
 
     command = [
-        PARAKEET_BINARY,
+        parakeet_binary,
         str(prepared_path),
         "--model",
         PARAKEET_MODEL,

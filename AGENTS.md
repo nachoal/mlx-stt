@@ -2,7 +2,6 @@
 
 ## Scope
 
-- Repository: `/Users/ia/code/projects/clis/stt`
 - Public repo: `nachoal/mlx-stt`
 - Primary purpose: local-first, MLX-first speech-to-text CLI for agents on macOS
 
@@ -11,6 +10,7 @@
 - Keep this repo focused on **transcription only**.
 - Do not add summarization, general media routing, prompt-harness systems, TTS, or unrelated multimodal workflows.
 - The command surface should stay small and explicit:
+  - `setup`
   - `recommend`
   - `transcribe`
   - `benchmark`
@@ -37,7 +37,9 @@ If benchmarks change materially, update the recommendation logic, README, tests,
 
 ## Portability Rules
 
-- Do not hardcode `/Users/ia/...` paths in repo code or docs.
+- Do not hardcode user-specific absolute checkout paths in repo code or docs.
+- Prefer the repo-managed setup flow over asking users to hand-build a separate MLX runtime.
+- Keep `install.sh` and `stt setup` working together.
 - Use `STT_SHARED_PYTHON` for the Python runtime that has `mlx-audio`.
 - Use env vars for optional benchmark fixtures:
   - `STT_SAMPLE_ENGLISH`
@@ -71,6 +73,7 @@ Run these before considering a change complete:
 python3 -m py_compile stt/*.py
 uv run --with pytest pytest
 stt doctor --json
+stt setup --runtime-dir /tmp/stt-runtime-test --download-models none
 ```
 
 If you change recommendation logic, also run:
