@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "stt"
 version = "0.1.0"
-description = "Local STT CLI with backend recommendation, transcription, and benchmarking"
+description = "MLX-first local STT CLI with backend recommendation, transcription, and benchmarking"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
@@ -34,9 +34,9 @@ dev = [
 stt = "stt.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/nachoal/agent-stt"
-Repository = "https://github.com/nachoal/agent-stt"
-Issues = "https://github.com/nachoal/agent-stt/issues"
+Homepage = "https://github.com/nachoal/mlx-stt"
+Repository = "https://github.com/nachoal/mlx-stt"
+Issues = "https://github.com/nachoal/mlx-stt/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["stt"]

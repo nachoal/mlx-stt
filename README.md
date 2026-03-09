@@ -1,6 +1,6 @@
 # stt
 
-`stt` is a local-first speech-to-text CLI for macOS, designed for agents and automation.
+`stt` is an MLX-first local speech-to-text CLI for macOS, designed for agents and automation.
 
 It answers one practical question cleanly:
 
@@ -23,7 +23,7 @@ Local transcription on Apple Silicon is fragmented:
 - direct `mlx-audio` Parakeet can be even faster on short clips
 - `Qwen3-ASR` is better for Spanish and multilingual audio
 
-Agents need a small, deterministic CLI that tells them which one to use, then runs it.
+Agents need a small, deterministic MLX-first CLI that tells them which one to use, then runs it.
 
 That is what `stt` does.
 
@@ -55,7 +55,7 @@ These defaults are based on local benchmarking logic built into the tool.
 ### 1. Install the CLI
 
 ```bash
-uv tool install git+https://github.com/nachoal/agent-stt
+uv tool install git+https://github.com/nachoal/mlx-stt
 ```
 
 For local development:
