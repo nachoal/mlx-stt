@@ -29,7 +29,7 @@ def which(name: str) -> str | None:
 
 def file_kind(path: Path) -> str:
     ext = path.suffix.lower()
-    if ext in {".wav", ".mp3", ".m4a", ".ogg", ".oga", ".flac", ".aac", ".webm"}:
+    if ext in {".wav", ".mp3", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".aac", ".webm"}:
         return "audio"
     if ext in {".mp4", ".mkv", ".mov", ".avi", ".m4v"}:
         return "video"
@@ -37,20 +37,23 @@ def file_kind(path: Path) -> str:
 
 
 def audio_duration(path: Path) -> float | None:
-    proc = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
     if proc.returncode != 0:
         return None
     try:
@@ -59,7 +62,55 @@ def audio_duration(path: Path) -> float | None:
         return None
 
 
-def convert_video_to_wav(input_path: Path, output_path: Path) -> Path:
+def audio_codec(path: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name,codec_type",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    streams = payload.get("streams") or []
+    if not streams:
+        return None
+    stream = streams[0]
+    if stream.get("codec_type") not in {None, "audio"}:
+        return None
+    codec_name = stream.get("codec_name")
+    if not codec_name:
+        return None
+    return str(codec_name).lower()
+
+
+def needs_wav_normalization(path: Path) -> bool:
+    kind = file_kind(path)
+    if kind == "video":
+        return True
+    codec_name = audio_codec(path)
+    if codec_name is not None:
+        return not codec_name.startswith("pcm_")
+    return path.suffix.lower() in {".ogg", ".oga", ".opus", ".webm"}
+
+
+def convert_media_to_wav(input_path: Path, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     run_command(
         [
@@ -75,6 +126,10 @@ def convert_video_to_wav(input_path: Path, output_path: Path) -> Path:
         ]
     )
     return output_path
+
+
+def convert_video_to_wav(input_path: Path, output_path: Path) -> Path:
+    return convert_media_to_wav(input_path, output_path)
 
 
 def json_print(payload: dict[str, Any]) -> None:

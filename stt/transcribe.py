@@ -8,8 +8,8 @@ import time
 from typing import Any
 
 from .config import resolve_parakeet_binary, resolve_shared_python
-from .constants import PARAKEET_BINARY, PARAKEET_MODEL, QWEN_MODELS
-from .utils import audio_duration, convert_video_to_wav, file_kind, run_command
+from .constants import PARAKEET_MODEL, QWEN_MODELS
+from .utils import audio_duration, convert_media_to_wav, needs_wav_normalization, run_command
 
 
 @dataclass
@@ -36,11 +36,11 @@ def _compute_rtf(total_time: float | None, duration: float | None) -> float | No
 
 
 def _prepare_input(path: Path) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
-    if file_kind(path) != "video":
+    if not needs_wav_normalization(path):
         return path, None
-    tmp = tempfile.TemporaryDirectory(prefix="stt-video-")
+    tmp = tempfile.TemporaryDirectory(prefix="stt-audio-")
     wav_path = Path(tmp.name) / f"{path.stem}.wav"
-    convert_video_to_wav(path, wav_path)
+    convert_media_to_wav(path, wav_path)
     return wav_path, tmp
 
 
@@ -59,10 +59,13 @@ def _run_shared_python(code: str) -> dict[str, Any]:
 
 
 def transcribe_qwen(path: Path, *, model_key: str, language: str = "auto") -> TranscriptionResult:
-    prepared_path, tmp = _prepare_input(path)
+    prepared_path = path
+    tmp: tempfile.TemporaryDirectory[str] | None = None
     model_id = QWEN_MODELS[model_key]
     language_arg = None if language == "auto" else language.title()
-    code = f"""
+    try:
+        prepared_path, tmp = _prepare_input(path)
+        code = f"""
 import json
 import time
 from mlx_audio.stt import load
@@ -82,7 +85,6 @@ print(json.dumps({{
     "audio_duration": getattr(result, "audio_duration", None),
 }}))
 """
-    try:
         payload = _run_shared_python(code)
         duration = payload.get("audio_duration") or audio_duration(prepared_path)
         return TranscriptionResult(
@@ -111,8 +113,11 @@ print(json.dumps({{
 
 
 def transcribe_mlx_parakeet(path: Path) -> TranscriptionResult:
-    prepared_path, tmp = _prepare_input(path)
-    code = f"""
+    prepared_path = path
+    tmp: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        prepared_path, tmp = _prepare_input(path)
+        code = f"""
 import json
 import time
 from mlx_audio.stt import load
@@ -128,7 +133,6 @@ print(json.dumps({{
     "audio_duration": getattr(result, "audio_duration", None),
 }}))
 """
-    try:
         payload = _run_shared_python(code)
         duration = payload.get("audio_duration") or audio_duration(prepared_path)
         return TranscriptionResult(
@@ -163,14 +167,96 @@ def transcribe_parakeet_cli(
     output_dir: Path | None = None,
     output_name: str = "transcript",
 ) -> TranscriptionResult:
-    prepared_path, tmp_input = _prepare_input(path)
+    prepared_path = path
+    tmp_input: tempfile.TemporaryDirectory[str] | None = None
     managed_dir = output_dir is None
     tmp_output = tempfile.TemporaryDirectory(prefix="stt-asr-") if managed_dir else None
     target_dir = output_dir or Path(tmp_output.name)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    parakeet_binary = resolve_parakeet_binary()
-    if parakeet_binary is None:
+    try:
+        prepared_path, tmp_input = _prepare_input(path)
+        parakeet_binary = resolve_parakeet_binary()
+        if parakeet_binary is None:
+            return TranscriptionResult(
+                backend="parakeet-mlx",
+                model=PARAKEET_MODEL,
+                text="",
+                success=False,
+                total_time=None,
+                audio_duration=audio_duration(prepared_path),
+                rtf=None,
+                stderr="parakeet-mlx not found. Run `stt setup` or set STT_PARAKEET_BINARY.",
+            )
+
+        command = [
+            parakeet_binary,
+            str(prepared_path),
+            "--model",
+            PARAKEET_MODEL,
+            "--output-dir",
+            str(target_dir),
+            "--output-format",
+            output_format,
+            "--output-template",
+            output_name,
+            "--decoding",
+            "greedy",
+            "--chunk-duration",
+            "120",
+            "--overlap-duration",
+            "15",
+        ]
+
+        started = time.time()
+        proc = run_command(command, check=False)
+        elapsed = time.time() - started
+
+        paths = {
+            "txt": target_dir / f"{output_name}.txt",
+            "json": target_dir / f"{output_name}.json",
+            "srt": target_dir / f"{output_name}.srt",
+            "vtt": target_dir / f"{output_name}.vtt",
+        }
+        text = ""
+        if paths["txt"].exists():
+            text = paths["txt"].read_text().strip()
+        elif paths["json"].exists():
+            try:
+                data = json.loads(paths["json"].read_text())
+                text = str(data.get("text") or data.get("transcript") or "").strip()
+            except json.JSONDecodeError:
+                text = paths["json"].read_text().strip()
+        else:
+            for key in ("srt", "vtt"):
+                if paths[key].exists():
+                    lines = []
+                    for raw_line in paths[key].read_text().splitlines():
+                        line = raw_line.strip()
+                        if not line or line.isdigit() or "-->" in line:
+                            continue
+                        lines.append(line)
+                    text = " ".join(lines).strip()
+                    break
+
+        duration = audio_duration(prepared_path)
+        result = TranscriptionResult(
+            backend="parakeet-mlx",
+            model=PARAKEET_MODEL,
+            text=text,
+            success=proc.returncode == 0,
+            total_time=elapsed,
+            audio_duration=duration,
+            rtf=_compute_rtf(elapsed, duration),
+            stderr=proc.stderr.strip() or None,
+            command=command,
+            output_paths={key: str(value) for key, value in paths.items() if value.exists()} or None,
+        )
+
+        if managed_dir:
+            result.output_paths = None
+        return result
+    except Exception as exc:
         return TranscriptionResult(
             backend="parakeet-mlx",
             model=PARAKEET_MODEL,
@@ -179,77 +265,10 @@ def transcribe_parakeet_cli(
             total_time=None,
             audio_duration=audio_duration(prepared_path),
             rtf=None,
-            stderr="parakeet-mlx not found. Run `stt setup` or set STT_PARAKEET_BINARY.",
+            stderr=str(exc),
         )
-
-    command = [
-        parakeet_binary,
-        str(prepared_path),
-        "--model",
-        PARAKEET_MODEL,
-        "--output-dir",
-        str(target_dir),
-        "--output-format",
-        output_format,
-        "--output-template",
-        output_name,
-        "--decoding",
-        "greedy",
-        "--chunk-duration",
-        "120",
-        "--overlap-duration",
-        "15",
-    ]
-
-    started = time.time()
-    proc = run_command(command, check=False)
-    elapsed = time.time() - started
-
-    paths = {
-        "txt": target_dir / f"{output_name}.txt",
-        "json": target_dir / f"{output_name}.json",
-        "srt": target_dir / f"{output_name}.srt",
-        "vtt": target_dir / f"{output_name}.vtt",
-    }
-    text = ""
-    if paths["txt"].exists():
-        text = paths["txt"].read_text().strip()
-    elif paths["json"].exists():
-        try:
-            data = json.loads(paths["json"].read_text())
-            text = str(data.get("text") or data.get("transcript") or "").strip()
-        except json.JSONDecodeError:
-            text = paths["json"].read_text().strip()
-    else:
-        for key in ("srt", "vtt"):
-            if paths[key].exists():
-                lines = []
-                for raw_line in paths[key].read_text().splitlines():
-                    line = raw_line.strip()
-                    if not line or line.isdigit() or "-->" in line:
-                        continue
-                    lines.append(line)
-                text = " ".join(lines).strip()
-                break
-
-    duration = audio_duration(prepared_path)
-    result = TranscriptionResult(
-        backend="parakeet-mlx",
-        model=PARAKEET_MODEL,
-        text=text,
-        success=proc.returncode == 0,
-        total_time=elapsed,
-        audio_duration=duration,
-        rtf=_compute_rtf(elapsed, duration),
-        stderr=proc.stderr.strip() or None,
-        command=command,
-        output_paths={key: str(value) for key, value in paths.items() if value.exists()} or None,
-    )
-
-    if managed_dir:
-        result.output_paths = None
-    if tmp_input is not None:
-        tmp_input.cleanup()
-    if managed_dir and tmp_output is not None:
-        tmp_output.cleanup()
-    return result
+    finally:
+        if tmp_input is not None:
+            tmp_input.cleanup()
+        if managed_dir and tmp_output is not None:
+            tmp_output.cleanup()

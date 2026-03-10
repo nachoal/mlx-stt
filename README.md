@@ -127,6 +127,8 @@ Example output:
 stt transcribe /path/to/file.wav --language english --speed --json
 ```
 
+`stt transcribe` automatically normalizes video inputs and compressed audio that benefits from ffmpeg preprocessing, including Telegram-style `.ogg`/Opus voice notes, into mono 16 kHz WAV before handing the file to the selected backend.
+
 Force a backend:
 
 ```bash
