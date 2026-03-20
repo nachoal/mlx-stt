@@ -24,7 +24,10 @@ def test_benchmark_file_shapes_rows(monkeypatch):
     )
 
     monkeypatch.setattr("stt.benchmark.transcribe_qwen", lambda path, model_key, language: fake)
-    monkeypatch.setattr("stt.benchmark.transcribe_mlx_parakeet", lambda path: fake)
+    monkeypatch.setattr(
+        "stt.benchmark.transcribe_mlx_parakeet",
+        lambda path, language="auto": fake,
+    )
     monkeypatch.setattr("stt.benchmark.transcribe_parakeet_cli", lambda path: fake)
 
     rows = benchmark_file(Path("clip.wav"), reference_text="hello world", language_hint="english")
