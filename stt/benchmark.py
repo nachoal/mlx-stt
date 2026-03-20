@@ -49,7 +49,7 @@ def benchmark_file(path: Path, *, reference_text: str | None, language_hint: str
     runs = [
         ("qwen3-asr-0.6b", transcribe_qwen(path, model_key="qwen3-asr-0.6b", language=language_hint)),
         ("qwen3-asr-1.7b", transcribe_qwen(path, model_key="qwen3-asr-1.7b", language=language_hint)),
-        ("mlx-parakeet", transcribe_mlx_parakeet(path)),
+        ("mlx-parakeet", transcribe_mlx_parakeet(path, language=language_hint)),
         ("parakeet-mlx", transcribe_parakeet_cli(path)),
     ]
     rows: list[dict[str, Any]] = []

@@ -112,20 +112,22 @@ print(json.dumps({{
             tmp.cleanup()
 
 
-def transcribe_mlx_parakeet(path: Path) -> TranscriptionResult:
+def transcribe_mlx_parakeet(path: Path, *, language: str = "auto") -> TranscriptionResult:
     prepared_path = path
     tmp: tempfile.TemporaryDirectory[str] | None = None
     try:
         prepared_path, tmp = _prepare_input(path)
+        lang_arg = None if language == "auto" else language
         code = f"""
 import json
 import time
 from mlx_audio.stt import load
 
 path = {str(prepared_path)!r}
+language = {lang_arg!r}
 started = time.time()
 model = load({PARAKEET_MODEL!r})
-result = model.generate(path, chunk_duration=120.0, overlap_duration=15.0)
+result = model.generate(path, chunk_duration=120.0, overlap_duration=15.0, language=language)
 elapsed = time.time() - started
 print(json.dumps({{
     "text": getattr(result, "text", ""),

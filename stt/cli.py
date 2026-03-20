@@ -135,7 +135,7 @@ def command_transcribe(args: argparse.Namespace) -> int:
     elif backend == "qwen3-asr-1.7b":
         result = transcribe_qwen(path, model_key="qwen3-asr-1.7b", language=args.language)
     elif backend == "mlx-parakeet":
-        result = transcribe_mlx_parakeet(path)
+        result = transcribe_mlx_parakeet(path, language=args.language)
     else:
         result = transcribe_parakeet_cli(
             path,
