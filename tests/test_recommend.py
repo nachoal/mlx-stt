@@ -16,7 +16,7 @@ def test_recommend_english_short_speed_prefers_mlx_parakeet(monkeypatch):
     assert result.backend == "mlx-parakeet"
 
 
-def test_recommend_subtitles_prefers_parakeet_cli(monkeypatch):
+def test_recommend_subtitles_prefers_segmented_mlx_parakeet(monkeypatch):
     monkeypatch.setattr("stt.recommend.file_kind", lambda path: "audio")
     monkeypatch.setattr("stt.recommend.audio_duration", lambda path: 30.0)
     result = recommend_backend(
@@ -24,7 +24,7 @@ def test_recommend_subtitles_prefers_parakeet_cli(monkeypatch):
         language="english",
         output_format="srt",
     )
-    assert result.backend == "parakeet-mlx"
+    assert result.backend == "mlx-parakeet"
 
 
 def test_recommend_spanish_prefers_qwen(monkeypatch):
@@ -48,7 +48,7 @@ def test_recommend_unknown_language_accuracy_prefers_qwen_17(monkeypatch):
     assert result.backend == "qwen3-asr-1.7b"
 
 
-def test_recommend_long_audio_prefers_parakeet_cli(monkeypatch):
+def test_recommend_long_audio_prefers_segmented_mlx_parakeet(monkeypatch):
     monkeypatch.setattr("stt.recommend.file_kind", lambda path: "audio")
     monkeypatch.setattr("stt.recommend.audio_duration", lambda path: 7200.0)
     result = recommend_backend(
@@ -56,4 +56,19 @@ def test_recommend_long_audio_prefers_parakeet_cli(monkeypatch):
         language="english",
         speed_priority=True,
     )
-    assert result.backend == "parakeet-mlx"
+    assert result.backend == "mlx-parakeet"
+
+
+def test_recommend_english_default_prefers_segmented_mlx_parakeet(monkeypatch):
+    monkeypatch.setattr("stt.recommend.file_kind", lambda path: "audio")
+    monkeypatch.setattr("stt.recommend.audio_duration", lambda path: 600.0)
+    result = recommend_backend(path=Path("meeting.wav"), language="english")
+    assert result.backend == "mlx-parakeet"
+
+
+def test_recommend_keeps_non_english_subtitles_and_long_audio_on_qwen(monkeypatch):
+    monkeypatch.setattr("stt.recommend.file_kind", lambda path: "audio")
+    monkeypatch.setattr("stt.recommend.audio_duration", lambda path: 7200.0)
+    assert recommend_backend(path=Path("charla.wav"), language="spanish", output_format="srt").backend == "qwen3-asr-0.6b"
+    assert recommend_backend(path=Path("charla.wav"), language="spanish").backend == "qwen3-asr-0.6b"
+    assert recommend_backend(path=Path("clip.wav"), language="auto", output_format="vtt").backend == "qwen3-asr-0.6b"

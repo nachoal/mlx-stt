@@ -6,7 +6,14 @@ from pathlib import Path
 import sys
 
 from .config import default_runtime_dir, save_config, stt_home
-from .constants import PARAKEET_MODEL, QWEN_MODELS
+from .constants import (
+    DIARIZATION_MODEL,
+    DIARIZATION_REVISION,
+    PARAKEET_CLI_PACKAGE,
+    PARAKEET_MODEL,
+    QWEN_MODELS,
+    RUNTIME_PACKAGES,
+)
 from .utils import run_command, which
 
 
@@ -45,6 +52,16 @@ def _warm_model(runtime_python: Path, model_id: str) -> None:
     run_command([str(runtime_python), "-c", code])
 
 
+def _warm_diarizer(runtime_python: Path) -> None:
+    code = (
+        "from huggingface_hub import snapshot_download\n"
+        f"snapshot_download({DIARIZATION_MODEL!r}, revision={DIARIZATION_REVISION!r}, "
+        "allow_patterns=['config.json', 'model.safetensors'])\n"
+        "print('ok')\n"
+    )
+    run_command([str(runtime_python), "-c", code])
+
+
 def bootstrap_runtime(
     *,
     runtime_dir: Path | None = None,
@@ -66,7 +83,8 @@ def bootstrap_runtime(
     target_dir = (runtime_dir or default_runtime_dir()).expanduser()
     _log(f"creating runtime at {target_dir}")
     target_dir.parent.mkdir(parents=True, exist_ok=True)
-    run_command(["uv", "venv", str(target_dir)], live=live)
+    # --clear: re-running setup rebuilds the runtime, which is how pinned upgrades land
+    run_command(["uv", "venv", "--clear", "--python", "3.12", str(target_dir)], live=live)
 
     runtime_python = _runtime_python(target_dir)
     if not runtime_python.exists():
@@ -80,8 +98,7 @@ def bootstrap_runtime(
             "install",
             "--python",
             str(runtime_python),
-            "mlx-audio==0.3.1",
-            "transformers==5.0.0rc3",
+            *RUNTIME_PACKAGES,
         ],
         live=live,
     )
@@ -93,7 +110,7 @@ def bootstrap_runtime(
             "install",
             "--python",
             str(runtime_python),
-            "parakeet-mlx==0.5.0",
+            PARAKEET_CLI_PACKAGE,
         ],
         live=live,
     )
@@ -107,6 +124,9 @@ def bootstrap_runtime(
             _log(f"warming model cache for {model_id}")
             _warm_model(runtime_python, model_id)
             downloaded_models.append(model_id)
+        _log(f"warming model cache for {DIARIZATION_MODEL}")
+        _warm_diarizer(runtime_python)
+        downloaded_models.append(DIARIZATION_MODEL)
     if download_models == "all":
         model_id = QWEN_MODELS["qwen3-asr-1.7b"]
         _log(f"warming model cache for {model_id}")

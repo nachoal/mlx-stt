@@ -100,6 +100,45 @@ def audio_codec(path: Path) -> str | None:
     return str(codec_name).lower()
 
 
+def is_pcm16k_mono_wav(path: Path) -> bool:
+    """True when the file is already 16 kHz mono 16-bit PCM WAV, the runtime worker's input format."""
+    if path.suffix.lower() != ".wav":
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name,sample_rate,channels",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        streams = json.loads(proc.stdout).get("streams") or []
+    except json.JSONDecodeError:
+        return False
+    if len(streams) != 1:
+        return False
+    stream = streams[0]
+    return (
+        stream.get("codec_name") == "pcm_s16le"
+        and str(stream.get("sample_rate")) == "16000"
+        and int(stream.get("channels") or 0) == 1
+    )
+
+
 def needs_wav_normalization(path: Path) -> bool:
     kind = file_kind(path)
     if kind == "video":
