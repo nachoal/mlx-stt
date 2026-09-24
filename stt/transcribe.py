@@ -8,8 +8,10 @@ import time
 from typing import Any
 
 from .config import resolve_parakeet_binary, resolve_shared_python
-from .constants import PARAKEET_MODEL, QWEN_MODELS
-from .utils import audio_duration, convert_media_to_wav, needs_wav_normalization, run_command
+from .constants import DIARIZATION_MODEL, DIARIZATION_REVISION, PARAKEET_MODEL, QWEN_MODELS
+from .utils import audio_duration, convert_media_to_wav, is_pcm16k_mono_wav, needs_wav_normalization, run_command
+
+WORKER = Path(__file__).resolve().parent / "runtime_worker.py"
 
 
 @dataclass
@@ -24,6 +26,9 @@ class TranscriptionResult:
     stderr: str | None = None
     command: list[str] | None = None
     output_paths: dict[str, str] | None = None
+    segments: list[dict[str, Any]] | None = None
+    speakers: int | None = None
+    timings: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -44,122 +49,110 @@ def _prepare_input(path: Path) -> tuple[Path, tempfile.TemporaryDirectory[str] |
     return wav_path, tmp
 
 
-def _run_shared_python(code: str) -> dict[str, Any]:
-    shared_python = resolve_shared_python()
-    if not shared_python:
-        raise RuntimeError("No Python with mlx_audio found. Set STT_SHARED_PYTHON.")
-    proc = run_command([shared_python, "-c", code], check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
-    for line in reversed(proc.stdout.splitlines()):
+def _last_json_line(stdout: str) -> dict[str, Any]:
+    for line in reversed(stdout.splitlines()):
         line = line.strip()
         if line.startswith("{") and line.endswith("}"):
             return json.loads(line)
-    raise RuntimeError(f"No JSON payload found:\n{proc.stdout}")
+    raise RuntimeError(f"No JSON payload found:\n{stdout}")
 
 
-def transcribe_qwen(path: Path, *, model_key: str, language: str = "auto") -> TranscriptionResult:
+def _run_worker(request: dict[str, Any]) -> dict[str, Any]:
+    shared_python = resolve_shared_python()
+    if not shared_python:
+        raise RuntimeError("No Python with mlx_audio found. Run `stt setup` or set STT_SHARED_PYTHON.")
+    proc = run_command([shared_python, str(WORKER), json.dumps(request)], check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
+    return _last_json_line(proc.stdout)
+
+
+def _prepare_pcm16k(path: Path) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+    if is_pcm16k_mono_wav(path):
+        return path, None
+    tmp = tempfile.TemporaryDirectory(prefix="stt-audio-")
+    wav_path = Path(tmp.name) / f"{path.stem}.wav"
+    convert_media_to_wav(path, wav_path)
+    return wav_path, tmp
+
+
+def transcribe_in_runtime(
+    path: Path,
+    *,
+    backend: str,
+    model: str,
+    language: str | None = None,
+    segment: bool = True,
+    diarize: bool = False,
+) -> TranscriptionResult:
+    """Transcribes in the runtime worker, per speaker-pure speech segment (diarizer-planned) or as one file."""
     prepared_path = path
     tmp: tempfile.TemporaryDirectory[str] | None = None
-    model_id = QWEN_MODELS[model_key]
+    try:
+        prepared_path, tmp = _prepare_pcm16k(path)
+        payload = _run_worker(
+            {
+                "audio": str(prepared_path),
+                "backend": backend,
+                "asr_model": model,
+                "language": language,
+                "segment": segment or diarize,
+                "diarize": diarize,
+                "diarization_model": DIARIZATION_MODEL,
+                "diarization_revision": DIARIZATION_REVISION,
+            }
+        )
+        duration = payload.get("audio_duration") or audio_duration(prepared_path)
+        return TranscriptionResult(
+            backend=backend,
+            model=model,
+            text=payload.get("text", ""),
+            success=True,
+            total_time=payload.get("elapsed"),
+            audio_duration=duration,
+            rtf=_compute_rtf(payload.get("elapsed"), duration),
+            segments=payload.get("segments"),
+            speakers=payload.get("speakers"),
+            timings=payload.get("timings"),
+        )
+    except Exception as exc:
+        return TranscriptionResult(
+            backend=backend,
+            model=model,
+            text="",
+            success=False,
+            total_time=None,
+            audio_duration=audio_duration(prepared_path),
+            rtf=None,
+            stderr=str(exc),
+        )
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+
+
+def transcribe_qwen(
+    path: Path,
+    *,
+    model_key: str,
+    language: str = "auto",
+    diarize: bool = False,
+    segment: bool = False,
+) -> TranscriptionResult:
+    # Whole-file decoding measured better for Qwen3 on Spanish; speaker labels and subtitle cues need
+    # per-turn segments.
     language_arg = None if language == "auto" else language.title()
-    try:
-        prepared_path, tmp = _prepare_input(path)
-        code = f"""
-import json
-import time
-from mlx_audio.stt import load
-
-path = {str(prepared_path)!r}
-language = {language_arg!r}
-started = time.time()
-model = load({model_id!r})
-if language is None:
-    result = model.generate(path)
-else:
-    result = model.generate(path, language=language)
-elapsed = time.time() - started
-print(json.dumps({{
-    "text": result.text,
-    "elapsed": elapsed,
-    "audio_duration": getattr(result, "audio_duration", None),
-}}))
-"""
-        payload = _run_shared_python(code)
-        duration = payload.get("audio_duration") or audio_duration(prepared_path)
-        return TranscriptionResult(
-            backend=model_key,
-            model=model_id,
-            text=payload.get("text", ""),
-            success=True,
-            total_time=payload.get("elapsed"),
-            audio_duration=duration,
-            rtf=_compute_rtf(payload.get("elapsed"), duration),
-        )
-    except Exception as exc:
-        return TranscriptionResult(
-            backend=model_key,
-            model=model_id,
-            text="",
-            success=False,
-            total_time=None,
-            audio_duration=audio_duration(prepared_path),
-            rtf=None,
-            stderr=str(exc),
-        )
-    finally:
-        if tmp is not None:
-            tmp.cleanup()
+    return transcribe_in_runtime(
+        path, backend=model_key, model=QWEN_MODELS[model_key], language=language_arg, segment=segment, diarize=diarize
+    )
 
 
-def transcribe_mlx_parakeet(path: Path, *, language: str = "auto") -> TranscriptionResult:
-    prepared_path = path
-    tmp: tempfile.TemporaryDirectory[str] | None = None
-    try:
-        prepared_path, tmp = _prepare_input(path)
-        lang_arg = None if language == "auto" else language
-        code = f"""
-import json
-import time
-from mlx_audio.stt import load
-
-path = {str(prepared_path)!r}
-language = {lang_arg!r}
-started = time.time()
-model = load({PARAKEET_MODEL!r})
-result = model.generate(path, chunk_duration=120.0, overlap_duration=15.0, language=language)
-elapsed = time.time() - started
-print(json.dumps({{
-    "text": getattr(result, "text", ""),
-    "elapsed": elapsed,
-    "audio_duration": getattr(result, "audio_duration", None),
-}}))
-"""
-        payload = _run_shared_python(code)
-        duration = payload.get("audio_duration") or audio_duration(prepared_path)
-        return TranscriptionResult(
-            backend="mlx-parakeet",
-            model=PARAKEET_MODEL,
-            text=payload.get("text", ""),
-            success=True,
-            total_time=payload.get("elapsed"),
-            audio_duration=duration,
-            rtf=_compute_rtf(payload.get("elapsed"), duration),
-        )
-    except Exception as exc:
-        return TranscriptionResult(
-            backend="mlx-parakeet",
-            model=PARAKEET_MODEL,
-            text="",
-            success=False,
-            total_time=None,
-            audio_duration=audio_duration(prepared_path),
-            rtf=None,
-            stderr=str(exc),
-        )
-    finally:
-        if tmp is not None:
-            tmp.cleanup()
+def transcribe_mlx_parakeet(path: Path, *, language: str = "auto", diarize: bool = False) -> TranscriptionResult:
+    # Always per speech turn: long windows make Parakeet v3 drop whole sentences. The worker narrows
+    # the windows further for non-English hints, where Parakeet otherwise drifts into English.
+    return transcribe_in_runtime(
+        path, backend="mlx-parakeet", model=PARAKEET_MODEL, language=language, segment=True, diarize=diarize
+    )
 
 
 def transcribe_parakeet_cli(

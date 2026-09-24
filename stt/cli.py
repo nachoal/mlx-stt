@@ -8,10 +8,14 @@ import sys
 
 from .benchmark import benchmark_file, benchmark_repo_samples
 from .config import config_path, default_runtime_dir, load_config, resolve_parakeet_binary, resolve_shared_python, stt_home
+from .constants import DIARIZATION_MODEL
 from .recommend import recommend_backend
 from .runtime import bootstrap_runtime
-from .transcribe import transcribe_mlx_parakeet, transcribe_parakeet_cli, transcribe_qwen
+from .segments import to_srt, to_text, to_vtt
+from .transcribe import TranscriptionResult, transcribe_mlx_parakeet, transcribe_parakeet_cli, transcribe_qwen
 from .utils import json_print, run_command, which
+
+IN_RUNTIME_BACKENDS = ("mlx-parakeet", "qwen3-asr-0.6b", "qwen3-asr-1.7b")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -39,6 +43,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="auto",
         choices=["auto", "mlx-parakeet", "parakeet-mlx", "qwen3-asr-0.6b", "qwen3-asr-1.7b"],
         help="Force a backend",
+    )
+    transcribe_parser.add_argument(
+        "--diarize",
+        action="store_true",
+        help="Label speakers (Nemotron-3-Diarization): speaker_N lines, segment speakers in JSON, speaker-prefixed cues",
     )
     transcribe_parser.add_argument("--json", action="store_true", help="Print JSON output")
 
@@ -111,6 +120,37 @@ def command_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_text(result: TranscriptionResult, *, speakers: bool) -> str:
+    if result.segments is None:
+        return result.text
+    return to_text(result.segments, speakers=speakers)
+
+
+def _write_outputs(
+    result: TranscriptionResult,
+    output_dir: Path,
+    output_name: str,
+    output_format: str,
+    *,
+    speakers: bool,
+) -> dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    formats = ["txt", "json", "srt", "vtt"] if output_format == "all" else [output_format]
+    written: dict[str, str] = {}
+    for fmt in formats:
+        target = output_dir / f"{output_name}.{fmt}"
+        if fmt == "txt":
+            target.write_text(_render_text(result, speakers=speakers))
+        elif fmt == "json":
+            target.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        elif fmt == "srt":
+            target.write_text(to_srt(result.segments or [], speakers=speakers))
+        elif fmt == "vtt":
+            target.write_text(to_vtt(result.segments or [], speakers=speakers))
+        written[fmt] = str(target)
+    return written
+
+
 def command_transcribe(args: argparse.Namespace) -> int:
     path = Path(args.file).expanduser().resolve()
     if not path.exists():
@@ -130,12 +170,20 @@ def command_transcribe(args: argparse.Namespace) -> int:
         recommendation = None
         backend = args.backend
 
+    if args.diarize and backend not in IN_RUNTIME_BACKENDS:
+        raise SystemExit(f"--diarize needs an in-runtime backend: {', '.join(IN_RUNTIME_BACKENDS)}.")
+
+    cues = args.output_format in {"srt", "vtt", "all"}
     if backend == "qwen3-asr-0.6b":
-        result = transcribe_qwen(path, model_key="qwen3-asr-0.6b", language=args.language)
+        result = transcribe_qwen(
+            path, model_key="qwen3-asr-0.6b", language=args.language, diarize=args.diarize, segment=cues
+        )
     elif backend == "qwen3-asr-1.7b":
-        result = transcribe_qwen(path, model_key="qwen3-asr-1.7b", language=args.language)
+        result = transcribe_qwen(
+            path, model_key="qwen3-asr-1.7b", language=args.language, diarize=args.diarize, segment=cues
+        )
     elif backend == "mlx-parakeet":
-        result = transcribe_mlx_parakeet(path, language=args.language)
+        result = transcribe_mlx_parakeet(path, language=args.language, diarize=args.diarize)
     else:
         result = transcribe_parakeet_cli(
             path,
@@ -145,16 +193,7 @@ def command_transcribe(args: argparse.Namespace) -> int:
         )
 
     if output_dir is not None and backend != "parakeet-mlx":
-        output_dir.mkdir(parents=True, exist_ok=True)
-        written: dict[str, str] = {}
-        if args.output_format in {"txt", "all"}:
-            txt_path = output_dir / f"{args.output_name}.txt"
-            txt_path.write_text(result.text)
-            written["txt"] = str(txt_path)
-        if args.output_format in {"json", "all"}:
-            json_path = output_dir / f"{args.output_name}.json"
-            json_path.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
-            written["json"] = str(json_path)
+        written = _write_outputs(result, output_dir, args.output_name, args.output_format, speakers=args.diarize)
         result.output_paths = written or None
 
     payload = {"result": result.to_dict(), "file": str(path)}
@@ -163,7 +202,7 @@ def command_transcribe(args: argparse.Namespace) -> int:
     if args.json:
         json_print(payload)
     else:
-        print(result.text)
+        print(_render_text(result, speakers=args.diarize))
     return 0 if result.success else 1
 
 
@@ -209,16 +248,18 @@ def command_doctor(args: argparse.Namespace) -> int:
         "parakeet_mlx_binary": resolve_parakeet_binary(),
         "versions": {
             "stt": _package_version("stt"),
+            "mlx": _external_package_version(shared_python, "mlx") if shared_python else None,
             "parakeet-mlx": _external_package_version(shared_python or "python3", "parakeet-mlx") if (shared_python or which("python3")) else None,
             "mlx-audio": _external_package_version(shared_python, "mlx-audio") if shared_python else None,
             "transformers": _external_package_version(shared_python, "transformers") if shared_python else None,
         },
         "recommendations": {
-            "english_fast_short": "mlx-parakeet",
-            "english_subtitles_or_long": "parakeet-mlx",
+            "english": "mlx-parakeet",
+            "english_subtitles_or_long": "mlx-parakeet",
             "multilingual_default": "qwen3-asr-0.6b",
             "multilingual_accuracy": "qwen3-asr-1.7b",
         },
+        "diarization_model": DIARIZATION_MODEL,
     }
     if args.json:
         json_print(payload)

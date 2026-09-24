@@ -44,10 +44,14 @@ def recommend_backend(
     normalized_language = normalize_language(language)
     rationale: list[str] = []
 
-    if output_format in {"srt", "vtt", "all"}:
-        rationale.append("Subtitle output requires parakeet-mlx.")
+    # Parakeet v3 drifts into English on real non-English speech (real Spanish talks: 35% WER vs 7.5%
+    # for Qwen3-ASR 0.6B), so only English skips the language-based rules below.
+    english = normalized_language == "english"
+
+    if english and output_format in {"srt", "vtt", "all"}:
+        rationale.append("English subtitle cues come from segmented MLX Parakeet sentence timestamps.")
         return Recommendation(
-            backend="parakeet-mlx",
+            backend="mlx-parakeet",
             model=PARAKEET_MODEL,
             rationale=rationale,
             language=normalized_language,
@@ -57,10 +61,10 @@ def recommend_backend(
             accuracy_priority=accuracy_priority,
         )
 
-    if duration is not None and duration > LONG_AUDIO_THRESHOLD_SECONDS:
-        rationale.append("Very long audio favors parakeet-mlx for stability.")
+    if english and duration is not None and duration > LONG_AUDIO_THRESHOLD_SECONDS:
+        rationale.append("Speech-turn segmentation keeps very long English audio stable on MLX Parakeet.")
         return Recommendation(
-            backend="parakeet-mlx",
+            backend="mlx-parakeet",
             model=PARAKEET_MODEL,
             rationale=rationale,
             language=normalized_language,
@@ -70,7 +74,7 @@ def recommend_backend(
             accuracy_priority=accuracy_priority,
         )
 
-    if normalized_language == "english":
+    if english:
         if speed_priority and duration is not None and duration <= SHORT_CLIP_THRESHOLD_SECONDS:
             rationale.append("English short clip + speed favors direct MLX Parakeet.")
             return Recommendation(
@@ -95,9 +99,9 @@ def recommend_backend(
                 speed_priority=speed_priority,
                 accuracy_priority=accuracy_priority,
             )
-        rationale.append("Default English recommendation is parakeet-mlx.")
+        rationale.append("Default English recommendation is segmented MLX Parakeet.")
         return Recommendation(
-            backend="parakeet-mlx",
+            backend="mlx-parakeet",
             model=PARAKEET_MODEL,
             rationale=rationale,
             language=normalized_language,
